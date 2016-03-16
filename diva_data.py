@@ -177,8 +177,6 @@ CPK_UTF_Table = Struct('utf_table',
     Struct('table_info',
         SBInt32('size'),
         Anchor('a_offset_anchor'),
-        # SBInt32('schema_offset'), # & 0x20 ?
-        # Value('v_schema_offset', lambda ctx: 0x20),
         SBInt32('rows_offset'),
         SBInt32('strings_offset'),
         SBInt32('data_offset'),
@@ -210,16 +208,6 @@ CPK_UTF_Table = Struct('utf_table',
         ),
     )),
 
-    # Pointer(lambda ctx: ctx.a_table_offset + 8 + ctx.table_info.rows_offset,
-    #     Array(lambda ctx: ctx.table_info.row_count, Dynamic('rows', lambda ctx: Struct('row',
-    #         *[Rename(c.column_name if c.column_name else 'BLANK',
-    #                 (ColumnTypeMapMirror[c.v_type]
-    #                     if c.v_storage != 0x30 else Pointer(lambda ctx: c.constant_offset.offset_value,
-    #                         ColumnTypeMapMirror[c.v_type]))
-    #                 if c.v_storage != 0x10 else Value('zero', lambda ctx: 0))
-    #             for c in ctx.columns]
-    #     ))),
-    # ),
     Pointer(lambda ctx: ctx.a_table_offset + 8 + ctx.table_info.rows_offset,
         Array(lambda ctx: ctx.table_info.row_count, Dynamic('rows', build_utf_row)),
     ),
