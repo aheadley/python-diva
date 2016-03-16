@@ -59,8 +59,44 @@ AFSFormat = Struct('AFS',
     ),
 )
 
+class Dynamic(Construct):
+   """
+   Dynamically creates a construct and uses it for parsing and building.
+   This allows you to create change the construction tree on the fly.
+   Deprecated.
+
+   Parameters:
+   * name - the name of the construct
+   * factoryfunc - a function that takes the context and returns a new
+     construct object which will be used for parsing and building.
+
+   Example:
+   def factory(ctx):
+       if ctx.bar == 8:
+           return UBInt8("spam")
+       if ctx.bar == 9:
+           return String("spam", 9)
+
+   Struct("foo",
+       UBInt8("bar"),
+       Dynamic("spam", factory),
+   )
+   """
+   __slots__ = ["factoryfunc"]
+   def __init__(self, name, factoryfunc):
+       Construct.__init__(self, name, self.FLAG_COPY_CONTEXT)
+       self.factoryfunc = factoryfunc
+       self._set_flag(self.FLAG_DYNAMIC)
+   def _parse(self, stream, context):
+       return self.factoryfunc(context)._parse(stream, context)
+   def _build(self, obj, stream, context):
+       return self.factoryfunc(context)._build(obj, stream, context)
+   def _sizeof(self, context):
+       return self.factoryfunc(context)._sizeof(context)
+
+
 ColumnTypeMap = {
-    'TYPE_STRING'       : UBInt32('value'),
+    'TYPE_STRING'       : SBInt32('value'),
     'TYPE_DATA'         : UBInt64('value'),
     'TYPE_FLOAT'        : BFloat32('value'),
     'TYPE_8BYTE2'       : SBInt64('value'),
@@ -95,10 +131,45 @@ CPK_UTF_Table_ColumnType = Enum(Byte('column_type'),
     # _default_           = 'TYPE_1BYTE',
 )
 
-ColumnTypeMapMirror = {v: ColumnTypeMap[k] for k, v in CPK_UTF_Table_ColumnType.encoding.iteritems() if k.startswith('TYPE_')}
+ColumnTypeMapMirror = {v: ColumnTypeMap[k]
+    for k, v in CPK_UTF_Table_ColumnType.encoding.iteritems()
+        if k.startswith('TYPE_')}
 
 UTF_STORAGE_MASK    = 0xF0
 UTF_TYPE_MASK       = 0x0F
+
+def build_utf_row(ctx):
+    cell_types = ColumnTypeMapMirror.copy()
+    cell_types[0x0B] = Struct('value',
+        SBInt32('offset'),
+        SBInt32('size'),
+        # Pointer(lambda ctx: ctx.offset,
+        #     # OnDemand(String('value', lambda ctx: ctx.size)),
+        # ),
+    )
+    cell_types[0x0A] = Struct('value',
+        SBInt32('offset'),
+        Pointer(lambda ctx: ctx.offset + ctx._._.a_table_offset + 8 + ctx._._.table_info.strings_offset,
+            CString('value')
+            # OnDemand(CString('value'))
+        ),
+    )
+
+    # cell_types[0x07] = Struct('value', Padding(4), SBInt32('value'))
+    # cell_types[0x06] = Struct('value', Padding(4), SBInt32('value'))
+
+    cells = []
+    for col in ctx.columns:
+        cell = cell_types[col.v_type]
+        if col.v_storage == 0x10:
+            cell = Value('zero', lambda ctx: 0x00)
+        else:
+            if col.v_storage == 0x30:
+                cell = Pointer(lambda ctx: col.constant_offset.a_constant_offset, cell)
+        cell = Rename(col.column_name, cell)
+        cells.append(cell)
+
+    return Struct('row', *cells)
 
 CPK_UTF_Table = Struct('utf_table',
     Anchor('a_table_offset'),
@@ -114,19 +185,14 @@ CPK_UTF_Table = Struct('utf_table',
         SBInt32('name_offset'),
 
         SBInt16('column_count'),
-        SBInt16('row_width'),
+        SBInt16('row_size'),
 
         SBInt32('row_count'),
 
         Value('v_strings_size', lambda ctx: ctx.data_offset - ctx.strings_offset)
     ),
 
-    Anchor('a_columns_offset'),
-
-    Array(lambda ctx: ctx.table_info.column_count, Struct('column',
-        Anchor('a_column_marker'),
-        Value('v_column_id', lambda ctx: (ctx.a_column_marker - ctx._.a_columns_offset) / 5),
-
+    Array(lambda ctx: ctx.table_info.column_count, Struct('columns',
         Byte('column_type'),
         SBInt32('column_name_offset'),
         Pointer(lambda ctx: ctx._.table_info.a_offset_anchor + ctx._.table_info.strings_offset + ctx.column_name_offset,
@@ -135,30 +201,51 @@ CPK_UTF_Table = Struct('utf_table',
         Value('v_type', lambda ctx: ctx.column_type & UTF_TYPE_MASK), # TYPE_MASK
         Value('v_storage', lambda ctx: ctx.column_type & UTF_STORAGE_MASK), # STORAGE_MASK
         If(lambda ctx: ctx.v_storage == 0x30, # STORAGE_CONSTANT
-            Struct('column_offset',
+            Struct('constant_offset',
                 Anchor('a_constant_offset'),
-                Switch('column_offset', lambda ctx: ctx.v_type,
-                    ColumnTypeMap,
+                Switch('offset_value', lambda ctx: ctx._.v_type,
+                    ColumnTypeMapMirror,
                 ),
             ),
         ),
-        Pointer(lambda ctx: ctx._.table_info.data_offset,
-            Array(lambda ctx: ctx._.table_info.row_count, Struct('rows',
-                Padding(lambda ctx: ctx._._.table_info.row_width),
-                # Switch('value', lambda ctx: ctx,
-                #     ColumnTypeMapMirror),
-                # Padding(lambda ctx: ctx._._.table_info.row_width),
-            ))
-        ),
     )),
+
+    # Pointer(lambda ctx: ctx.a_table_offset + 8 + ctx.table_info.rows_offset,
+    #     Array(lambda ctx: ctx.table_info.row_count, Dynamic('rows', lambda ctx: Struct('row',
+    #         *[Rename(c.column_name if c.column_name else 'BLANK',
+    #                 (ColumnTypeMapMirror[c.v_type]
+    #                     if c.v_storage != 0x30 else Pointer(lambda ctx: c.constant_offset.offset_value,
+    #                         ColumnTypeMapMirror[c.v_type]))
+    #                 if c.v_storage != 0x10 else Value('zero', lambda ctx: 0))
+    #             for c in ctx.columns]
+    #     ))),
+    # ),
+    Pointer(lambda ctx: ctx.a_table_offset + 8 + ctx.table_info.rows_offset,
+        Array(lambda ctx: ctx.table_info.row_count, Dynamic('rows', build_utf_row)),
+    ),
 )
+
 
 CPKFormat = Struct('CPK',
     Struct('header',
         Magic('CPK '),
         Padding(12),
+        CPK_UTF_Table,
     ),
-    CPK_UTF_Table,
+
+    IfThenElse('v_toc_offset', lambda ctx: ctx.header.utf_table.rows[0].TocOffset != 0,
+        Value('_toc_offset', lambda ctx: ctx.header.utf_table.rows[0].TocOffset),
+        Value('_itoc_offset', lambda ctx: ctx.header.utf_table.rows[0].ITocOffset),
+    ),
+    Value('v_content_offset', lambda ctx: ctx.header.utf_table.rows[0].ContentOffset),
+    Value('v_file_count', lambda ctx: ctx.header.utf_table.rows[0].Files),
+    Value('v_alignment', lambda ctx: ctx.header.utf_table.rows[0].Align),
+
+    Pointer(lambda ctx: ctx.v_toc_offset, Struct('toc',
+        Magic('TOC '),
+        Padding(12),
+        CPK_UTF_Table,
+    )),
 )
 
 DSCFormat = Struct('DSC',

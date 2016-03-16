@@ -30,24 +30,13 @@ from diva_data import CPKFormat
 
 logging.basicConfig(level=logging.DEBUG)
 
-# def extract_afs_file(src_file, dest_dir):
-#     logging.info('Extracting AFS file: %s', src_file)
-#     with open(src_file) as src_handle:
-#         src_data = AFSFormat.parse_stream(src_handle)
-
-#         logging.info('Found %d entries', src_data.header.entry_count)
-#         for i, entry in enumerate(src_data.toc.entries):
-#             dest_file = os.path.join(dest_dir, src_data.metadata[i].name)
-#             logging.info('Extracting "%s" -> "%s" [%08d b]',
-#                 src_data.metadata[i].name, dest_file, entry.length)
-#             with open(dest_file, 'w') as dest_handle:
-#                 src_handle.seek(entry.offset)
-#                 dest_handle.write(src_handle.read(entry.length))
-
-
 if __name__ == '__main__':
     import sys
 
     with open(sys.argv[1]) as cpk_f:
         cpk_data = CPKFormat.parse_stream(cpk_f)
-        print cpk_data
+        # print cpk_data
+        for row in cpk_data.toc.utf_table.rows:
+            if row.FileSize != row.ExtractSize:
+                print row.FileName.value
+
