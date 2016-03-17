@@ -26,26 +26,29 @@
 import logging
 import os.path
 
-from diva_data import AFSFormat
+from diva.formats import CPKFormat
 
 logging.basicConfig(level=logging.DEBUG)
 
-def extract_afs_file(src_file, dest_dir):
-    logging.info('Extracting AFS file: %s', src_file)
+def extract_cpk_file(src_file, dest_dir):
+    logging.info('Extracting CPK file: %s', src_file)
     with open(src_file) as src_handle:
-        src_data = AFSFormat.parse_stream(src_handle)
+        src_data = CPKFormat.parse_stream(src_handle)
 
-        logging.info('Found %d entries', src_data.header.entry_count)
-        for i, entry in enumerate(src_data.toc.entries):
-            dest_file = os.path.join(dest_dir, src_data.metadata[i].name)
+        logging.info('Found %d entries', src_data.toc.utf_table.table_info.row_count)
+        for i, entry in enumerate(src_data.toc.utf_table.rows):
+            fn = entry.FileName.value
+            if entry.DirName.value != '<NULL>':
+                fn = os.path.join(entry.DirName.value, fn)
+            dest_file = os.path.join(dest_dir, fn)
             logging.info('Extracting "%s" -> "%s" [%08d b]',
-                src_data.metadata[i].name, dest_file, entry.length)
+                fn, dest_file, entry.FileSize)
             with open(dest_file, 'w') as dest_handle:
-                src_handle.seek(entry.offset)
-                dest_handle.write(src_handle.read(entry.length))
+                src_handle.seek(entry.FileOffset)
+                dest_handle.write(src_handle.read(entry.FileSize))
 
 
 if __name__ == '__main__':
     import sys
 
-    extract_afs_file(sys.argv[1], sys.argv[2])
+    extract_cpk_file(sys.argv[1], sys.argv[2])

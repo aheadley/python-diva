@@ -22,33 +22,3 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-
-import logging
-import os.path
-
-from diva_data import CPKFormat
-
-logging.basicConfig(level=logging.DEBUG)
-
-def extract_cpk_file(src_file, dest_dir):
-    logging.info('Extracting CPK file: %s', src_file)
-    with open(src_file) as src_handle:
-        src_data = CPKFormat.parse_stream(src_handle)
-
-        logging.info('Found %d entries', src_data.toc.utf_table.table_info.row_count)
-        for i, entry in enumerate(src_data.toc.utf_table.rows):
-            fn = entry.FileName.value
-            if entry.DirName.value != '<NULL>':
-                fn = os.path.join(entry.DirName.value, fn)
-            dest_file = os.path.join(dest_dir, fn)
-            logging.info('Extracting "%s" -> "%s" [%08d b]',
-                fn, dest_file, entry.FileSize)
-            with open(dest_file, 'w') as dest_handle:
-                src_handle.seek(entry.FileOffset)
-                dest_handle.write(src_handle.read(entry.FileSize))
-
-
-if __name__ == '__main__':
-    import sys
-
-    extract_cpk_file(sys.argv[1], sys.argv[2])

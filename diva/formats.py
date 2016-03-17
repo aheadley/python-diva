@@ -25,6 +25,8 @@
 
 from construct import *
 
+from .util import IsTimestamp, IsNotTimestamp, Dynamic
+
 AFSFormat = Struct('AFS',
     Struct('header',
         Magic('AFS\x00'),
@@ -58,42 +60,6 @@ AFSFormat = Struct('AFS',
         ),
     ),
 )
-
-class Dynamic(Construct):
-   """
-   Dynamically creates a construct and uses it for parsing and building.
-   This allows you to create change the construction tree on the fly.
-   Deprecated.
-
-   Parameters:
-   * name - the name of the construct
-   * factoryfunc - a function that takes the context and returns a new
-     construct object which will be used for parsing and building.
-
-   Example:
-   def factory(ctx):
-       if ctx.bar == 8:
-           return UBInt8("spam")
-       if ctx.bar == 9:
-           return String("spam", 9)
-
-   Struct("foo",
-       UBInt8("bar"),
-       Dynamic("spam", factory),
-   )
-   """
-   __slots__ = ["factoryfunc"]
-   def __init__(self, name, factoryfunc):
-       Construct.__init__(self, name, self.FLAG_COPY_CONTEXT)
-       self.factoryfunc = factoryfunc
-       self._set_flag(self.FLAG_DYNAMIC)
-   def _parse(self, stream, context):
-       return self.factoryfunc(context)._parse(stream, context)
-   def _build(self, obj, stream, context):
-       return self.factoryfunc(context)._build(obj, stream, context)
-   def _sizeof(self, context):
-       return self.factoryfunc(context)._sizeof(context)
-
 
 ColumnTypeMap = {
     'TYPE_STRING'       : SBInt32('value'),
@@ -213,7 +179,6 @@ CPK_UTF_Table = Struct('utf_table',
     ),
 )
 
-
 CPKFormat = Struct('CPK',
     Struct('header',
         Magic('CPK '),
@@ -294,15 +259,6 @@ DSC_KeyStructs = {
             Pass,
         ),
 }
-
-TIMESTAMP_THRESHOLD = 1000000
-class IsTimestamp(Validator):
-    def _validate(self, obj, context):
-        return obj > TIMESTAMP_THRESHOLD
-
-class IsNotTimestamp(Validator):
-    def _validate(self, obj, context):
-        return obj < TIMESTAMP_THRESHOLD
 
 DSCFormat = Struct('DSC',
     # Struct('header',

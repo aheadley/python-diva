@@ -1,4 +1,4 @@
-from diva_data import DSCFormat
+from diva.formats import DSCFormat
 from pprint import pprint
 from construct import *
 
